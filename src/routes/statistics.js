@@ -99,7 +99,34 @@ router.get(
   authRequired,
   roleRequired('admin', 'hr', 'medical'),
   asyncHandler(async (req, res) => {
-    const result = await StatisticsReportService.getReportHistory();
+    const filters = {
+      year: req.query.year,
+      type: req.query.type,
+      deptId: req.query.deptId,
+      page: parseInt(req.query.page) || 1,
+      pageSize: parseInt(req.query.pageSize) || 20,
+    };
+    const result = await StatisticsReportService.getReportHistory(filters);
+    pagedSuccess(res, result);
+  })
+);
+
+router.get(
+  '/report-years',
+  authRequired,
+  roleRequired('admin', 'hr', 'medical'),
+  asyncHandler(async (req, res) => {
+    const result = await StatisticsReportService.getReportYears();
+    success(res, result);
+  })
+);
+
+router.get(
+  '/report-preview/:fileName',
+  authRequired,
+  roleRequired('admin', 'hr', 'medical'),
+  asyncHandler(async (req, res) => {
+    const result = await StatisticsReportService.getReportPreview(req.params.fileName);
     success(res, result);
   })
 );

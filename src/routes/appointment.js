@@ -129,6 +129,47 @@ router.get(
 );
 
 router.get(
+  '/approvals/workbench',
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const filters = {
+      status: req.query.status,
+      isOverBudget: req.query.isOverBudget,
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      deptId: req.query.deptId,
+      keyword: req.query.keyword,
+    };
+    const result = await ApprovalService.getApprovalWorkbench(req.user.id, filters, {
+      page: parseInt(req.query.page) || 1,
+      pageSize: parseInt(req.query.pageSize) || 20,
+    });
+    pagedSuccess(res, result);
+  })
+);
+
+router.get(
+  '/approvals/stats',
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const result = await ApprovalService.getApprovalStats(req.user.id);
+    success(res, result);
+  })
+);
+
+router.get(
+  '/approvals/:id/detail',
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const result = await ApprovalService.getApprovalDetail(
+      parseInt(req.params.id),
+      req.user.id
+    );
+    success(res, result);
+  })
+);
+
+router.get(
   '/:id',
   authRequired,
   asyncHandler(async (req, res) => {
@@ -264,6 +305,39 @@ router.post(
       req.user.id
     );
     success(res, result);
+  })
+);
+
+router.get(
+  '/budget/overbudget-dashboard',
+  authRequired,
+  roleRequired('admin', 'hr', 'manager', 'finance'),
+  asyncHandler(async (req, res) => {
+    const filters = {
+      year: req.query.year,
+      half: req.query.half,
+      deptId: req.query.deptId,
+    };
+    const result = await BudgetService.getOverBudgetDashboard(filters);
+    success(res, result);
+  })
+);
+
+router.get(
+  '/budget/detail-records',
+  authRequired,
+  roleRequired('admin', 'hr', 'manager', 'finance'),
+  asyncHandler(async (req, res) => {
+    const filters = {
+      deptId: req.query.deptId,
+      year: req.query.year,
+      half: req.query.half,
+      type: req.query.type,
+      page: parseInt(req.query.page) || 1,
+      pageSize: parseInt(req.query.pageSize) || 20,
+    };
+    const result = await BudgetService.getBudgetDetailRecords(filters);
+    pagedSuccess(res, result);
   })
 );
 

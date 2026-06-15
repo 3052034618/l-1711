@@ -1,0 +1,131 @@
+{
+  "total": 31,
+  "passed": 31,
+  "failed": 0,
+  "details": [
+    {
+      "name": "语法检查: src/services/ApprovalService.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/services/BudgetService.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/services/StatisticsReportService.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/services/NotificationService.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/routes/appointment.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/routes/statistics.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "getApprovalWorkbench 方法存在",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "工作台支持多维度筛选",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "每条申请显示预算缺口",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "显示当前审批层级",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "显示历史审批意见",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "getApprovalStats 方法存在",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "工作台API路由已添加",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "getOverBudgetDashboard 方法存在",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "按部门和半年维度展示",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "正常占用、审批中、超预算分开展示",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "getBudgetDetailRecords 方法存在（金额反查）",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "反查返回预约和审批记录",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "超预算看板API路由已添加",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "报表生成时保存摘要",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "摘要包含关键指标和趋势图数据",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "getReportHistory 支持多维度筛选",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "getReportPreview 方法存在",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "报表相关API路由已添加",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "NotificationService.create 完全非阻断",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "所有通知发送使用 setImmediate",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "所有发送通道非阻断",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "企业微信预警推送非阻断",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "ApprovalService 通知调用非阻断",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "所有通知使用 [非阻断] 日志标记",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "通知状态记录完整",
+      "status": "✅ 通过"
+    }
+  ]
+}

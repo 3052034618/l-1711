@@ -1,5 +1,5 @@
 const { Op } = require('sequelize');
-const { Budget, Appointment, sequelize } = require('../models');
+const { Budget, Appointment, ApprovalRecord, Department, Employee, sequelize } = require('../models');
 const { getCurrentYear, getYearRange } = require('../utils/helpers');
 const { logger } = require('../utils/logger');
 
@@ -292,6 +292,285 @@ class BudgetService {
     };
 
     return suggestions[level] || suggestions[3];
+  }
+
+  async getOverBudgetDashboard(filters = {}) {
+    const { year, half = 'all', deptId } = filters;
+    const targetYear = year ? parseInt(year) : getCurrentYear();
+
+    const where = { year: targetYear };
+    if (half !== 'all') where.half = half;
+    if (deptId) where.deptId = parseInt(deptId);
+
+    const budgets = await Budget.findAll({
+      where,
+      include: [{ association: 'department', attributes: ['id', 'deptName'] }],
+      order: [['deptId', 'ASC'], ['half', 'ASC']],
+    });
+
+    const deptIds = budgets.map((b) => b.deptId);
+    const halfValues = half !== 'all' ? [half] : ['1', '2'];
+
+    const appointments = await Appointment.findAll({
+      where: {
+        deptId: { [Op.in]: deptIds },
+        year: targetYear,
+        half: { [Op.in]: halfValues },
+        isOverBudget: true,
+        status: { [Op.in]: ['pending_approval', 'approved', 'confirmed', 'in_progress', 'completed'] },
+      },
+      include: [
+        { association: 'employee', attributes: ['id', 'name', 'empNo'] },
+        { association: 'department', attributes: ['id', 'deptName'] },
+      ],
+      order: [['createdAt', 'DESC']],
+    });
+
+    const appointmentIds = appointments.map((a) => a.id);
+    const approvalRecords = await ApprovalRecord.findAll({
+      where: { appointmentId: { [Op.in]: appointmentIds } },
+      order: [['approvalLevel', 'ASC']],
+    });
+
+    const recordsMap = {};
+    approvalRecords.forEach((r) => {
+      if (!recordsMap[r.appointmentId]) recordsMap[r.appointmentId] = [];
+      recordsMap[r.appointmentId].push(r);
+    });
+
+    const result = {
+      year: targetYear,
+      half,
+      summary: {
+        totalBudget: 0,
+        normalUsed: 0,
+        normalApproved: 0,
+        overBudgetApproved: 0,
+        overBudgetUsed: 0,
+        totalOverBudget: 0,
+        overBudgetCount: 0,
+      },
+      byDept: [],
+      byHalf: [],
+      overBudgetAppointments: [],
+    };
+
+    budgets.forEach((b) => {
+      const total = parseFloat(b.totalAmount) || 0;
+      const used = parseFloat(b.usedAmount) || 0;
+      const approved = parseFloat(b.approvedAmount) || 0;
+      const overBudgetApproved = parseFloat(b.overBudgetApprovedAmount) || 0;
+      const overBudgetUsed = parseFloat(b.overBudgetUsedAmount) || 0;
+
+      result.summary.totalBudget += total;
+      result.summary.normalUsed += used;
+      result.summary.normalApproved += approved;
+      result.summary.overBudgetApproved += overBudgetApproved;
+      result.summary.overBudgetUsed += overBudgetUsed;
+      result.summary.totalOverBudget += overBudgetApproved + overBudgetUsed;
+    });
+
+    const deptMap = {};
+    const halfMap = {};
+
+    budgets.forEach((b) => {
+      const total = parseFloat(b.totalAmount) || 0;
+      const used = parseFloat(b.usedAmount) || 0;
+      const approved = parseFloat(b.approvedAmount) || 0;
+      const overBudgetApproved = parseFloat(b.overBudgetApprovedAmount) || 0;
+      const overBudgetUsed = parseFloat(b.overBudgetUsedAmount) || 0;
+      const normalAvailable = total - used - approved;
+      const totalOverBudget = overBudgetApproved + overBudgetUsed;
+
+      if (!deptMap[b.deptId]) {
+        deptMap[b.deptId] = {
+          deptId: b.deptId,
+          deptName: b.department?.deptName || '未知部门',
+          totalBudget: 0,
+          normalUsed: 0,
+          normalApproved: 0,
+          normalAvailable: 0,
+          overBudgetApproved: 0,
+          overBudgetUsed: 0,
+          totalOverBudget: 0,
+          byHalf: {},
+        };
+      }
+
+      deptMap[b.deptId].totalBudget += total;
+      deptMap[b.deptId].normalUsed += used;
+      deptMap[b.deptId].normalApproved += approved;
+      deptMap[b.deptId].normalAvailable += normalAvailable;
+      deptMap[b.deptId].overBudgetApproved += overBudgetApproved;
+      deptMap[b.deptId].overBudgetUsed += overBudgetUsed;
+      deptMap[b.deptId].totalOverBudget += totalOverBudget;
+      deptMap[b.deptId].byHalf[b.half] = {
+        totalBudget: total,
+        normalUsed: used,
+        normalApproved: approved,
+        normalAvailable,
+        overBudgetApproved,
+        overBudgetUsed,
+        totalOverBudget,
+      };
+
+      if (!halfMap[b.half]) {
+        halfMap[b.half] = {
+          half: b.half,
+          halfName: b.half === '1' ? '上半年' : b.half === '2' ? '下半年' : '全年',
+          totalBudget: 0,
+          normalUsed: 0,
+          normalApproved: 0,
+          normalAvailable: 0,
+          overBudgetApproved: 0,
+          overBudgetUsed: 0,
+          totalOverBudget: 0,
+        };
+      }
+
+      halfMap[b.half].totalBudget += total;
+      halfMap[b.half].normalUsed += used;
+      halfMap[b.half].normalApproved += approved;
+      halfMap[b.half].normalAvailable += normalAvailable;
+      halfMap[b.half].overBudgetApproved += overBudgetApproved;
+      halfMap[b.half].overBudgetUsed += overBudgetUsed;
+      halfMap[b.half].totalOverBudget += totalOverBudget;
+    });
+
+    result.byDept = Object.values(deptMap).map((d) => ({
+      ...d,
+      usagePercent: d.totalBudget > 0 ? ((d.normalUsed + d.normalApproved) / d.totalBudget) * 100 : 0,
+      overBudgetPercent: d.totalBudget > 0 ? (d.totalOverBudget / d.totalBudget) * 100 : 0,
+    }));
+
+    result.byHalf = Object.values(halfMap);
+
+    result.overBudgetAppointments = appointments.map((apt) => {
+      const records = recordsMap[apt.id] || [];
+      const currentRecord = records.find((r) => r.status === 'pending');
+      const latestRecord = records[records.length - 1];
+
+      return {
+        id: apt.id,
+        orderNo: apt.orderNo,
+        employee: apt.employee,
+        department: apt.department,
+        packageName: apt.packageName,
+        totalAmount: apt.totalAmount,
+        year: apt.year,
+        half: apt.half,
+        status: apt.status,
+        approvalStatus: apt.approvalStatus,
+        approvalLevel: apt.approvalLevel,
+        currentApproverId: apt.currentApproverId,
+        isOverBudget: apt.isOverBudget,
+        createdAt: apt.createdAt,
+        approvalHistory: records.map((r) => ({
+          id: r.id,
+          approvalLevel: r.approvalLevel,
+          approverName: r.approverName,
+          status: r.status,
+          reason: r.reason,
+          approvalTime: r.approvalTime,
+        })),
+        currentApproval: currentRecord ? {
+          id: currentRecord.id,
+          approvalLevel: currentRecord.approvalLevel,
+          approverName: currentRecord.approverName,
+        } : null,
+        latestApproval: latestRecord ? {
+          id: latestRecord.id,
+          approvalLevel: latestRecord.approvalLevel,
+          approverName: latestRecord.approverName,
+          status: latestRecord.status,
+          reason: latestRecord.reason,
+        } : null,
+      };
+    });
+
+    result.summary.overBudgetCount = result.overBudgetAppointments.length;
+    result.summary.normalAvailable = result.summary.totalBudget - result.summary.normalUsed - result.summary.normalApproved;
+    result.summary.usagePercent = result.summary.totalBudget > 0
+      ? ((result.summary.normalUsed + result.summary.normalApproved) / result.summary.totalBudget) * 100
+      : 0;
+    result.summary.overBudgetPercent = result.summary.totalBudget > 0
+      ? (result.summary.totalOverBudget / result.summary.totalBudget) * 100
+      : 0;
+
+    return result;
+  }
+
+  async getBudgetDetailRecords(filters = {}, options = {}) {
+    const { deptId, year, half, type, page = 1, pageSize = 20 } = filters;
+    const { limit, offset } = (await import('../utils/helpers')).paginate(page, pageSize);
+
+    const where = {};
+    if (deptId) where.deptId = parseInt(deptId);
+    if (year) where.year = parseInt(year);
+    if (half && half !== 'all') where.half = half;
+
+    switch (type) {
+      case 'normalUsed':
+        where.status = { [Op.in]: ['confirmed', 'in_progress', 'completed'] };
+        where.isOverBudget = false;
+        break;
+      case 'normalApproved':
+        where.status = { [Op.in]: ['approved', 'pending_approval'] };
+        where.approvalStatus = { [Op.in]: ['approved', 'pending'] };
+        where.isOverBudget = false;
+        break;
+      case 'overBudgetApproved':
+        where.status = { [Op.in]: ['approved', 'pending_approval'] };
+        where.isOverBudget = true;
+        break;
+      case 'overBudgetUsed':
+        where.status = { [Op.in]: ['confirmed', 'in_progress', 'completed'] };
+        where.isOverBudget = true;
+        break;
+      default:
+        break;
+    }
+
+    const { count, rows } = await Appointment.findAndCountAll({
+      where,
+      include: [
+        { association: 'employee', attributes: ['id', 'name', 'empNo'] },
+        { association: 'department', attributes: ['id', 'deptName'] },
+      ],
+      order: [['createdAt', 'DESC']],
+      limit,
+      offset,
+    });
+
+    const appointmentIds = rows.map((a) => a.id);
+    const approvalRecords = await ApprovalRecord.findAll({
+      where: { appointmentId: { [Op.in]: appointmentIds } },
+      order: [['approvalLevel', 'ASC']],
+    });
+
+    const recordsMap = {};
+    approvalRecords.forEach((r) => {
+      if (!recordsMap[r.appointmentId]) recordsMap[r.appointmentId] = [];
+      recordsMap[r.appointmentId].push(r);
+    });
+
+    const list = rows.map((apt) => ({
+      id: apt.id,
+      orderNo: apt.orderNo,
+      employee: apt.employee,
+      department: apt.department,
+      packageName: apt.packageName,
+      totalAmount: apt.totalAmount,
+      year: apt.year,
+      half: apt.half,
+      status: apt.status,
+      approvalStatus: apt.approvalStatus,
+      isOverBudget: apt.isOverBudget,
+      createdAt: apt.createdAt,
+      approvalHistory: recordsMap[apt.id] || [],
+    }));
+
+    return { list, total: count, page, pageSize, type };
   }
 }
 

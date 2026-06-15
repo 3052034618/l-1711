@@ -7,35 +7,49 @@ const { paginate, formatPagedResult } = require('../utils/helpers');
 
 class NotificationService {
   async create(data) {
-    const notification = await Notification.create({
-      ...data,
-      status: 'pending',
-      readStatus: 'unread',
-    });
+    try {
+      const notification = await Notification.create({
+        ...data,
+        status: 'pending',
+        readStatus: 'unread',
+      });
 
-    this._processNotification(notification).catch((e) => {
-      logger.error('处理通知失败', e);
-    });
+      setImmediate(() => {
+        this._processNotification(notification).catch((e) => {
+          logger.error('[非阻断] 处理通知失败', e.message);
+        });
+      });
 
-    return notification;
+      return { success: true, notification };
+    } catch (error) {
+      logger.error('[非阻断] 创建通知记录失败', error.message);
+      return { success: false, error: error.message };
+    }
   }
 
   async batchCreate(items) {
-    const notifications = await Notification.bulkCreate(
-      items.map((item) => ({
-        ...item,
-        status: 'pending',
-        readStatus: 'unread',
-      }))
-    );
+    try {
+      const notifications = await Notification.bulkCreate(
+        items.map((item) => ({
+          ...item,
+          status: 'pending',
+          readStatus: 'unread',
+        }))
+      );
 
-    notifications.forEach((n) => {
-      this._processNotification(n).catch((e) => {
-        logger.error(`处理通知失败: ${n.id}`, e);
+      notifications.forEach((n) => {
+        setImmediate(() => {
+          this._processNotification(n).catch((e) => {
+            logger.error(`[非阻断] 处理通知失败: ${n.id}`, e.message);
+          });
+        });
       });
-    });
 
-    return notifications;
+      return { success: true, notifications, count: notifications.length };
+    } catch (error) {
+      logger.error('[非阻断] 批量创建通知记录失败', error.message);
+      return { success: false, error: error.message, count: 0 };
+    }
   }
 
   async _processNotification(notification) {
@@ -43,29 +57,46 @@ class NotificationService {
       notification.status = 'sending';
       await notification.save();
 
+      let sendResult = { success: true };
+
       switch (notification.channel) {
         case 'wecom':
-          await this._sendWecom(notification);
+          sendResult = await this._sendWecom(notification);
           break;
         case 'dingtalk':
-          await this._sendDingtalk(notification);
+          sendResult = await this._sendDingtalk(notification);
           break;
         case 'email':
-          await this._sendEmail(notification);
+          sendResult = await this._sendEmail(notification);
           break;
         case 'sms':
-          await this._sendSms(notification);
+          sendResult = await this._sendSms(notification);
           break;
         case 'system':
         default:
-          notification.status = 'success';
+          sendResult = { success: true };
           break;
       }
 
-      notification.status = 'success';
-      notification.sendTime = new Date();
+      if (sendResult.success) {
+        notification.status = 'success';
+        notification.sendTime = new Date();
+        notification.errorMsg = null;
+      } else {
+        notification.status = 'failed';
+        notification.errorMsg = sendResult.error || '发送失败';
+
+        if (notification.retryTimes < 3) {
+          notification.retryTimes = notification.retryTimes + 1;
+          const retryDelay = 60000 * (notification.retryTimes + 1);
+          logger.info(`[非阻断] 通知 ${notification.id} 将在 ${retryDelay / 60000} 分钟后第 ${notification.retryTimes} 次重试`);
+          setTimeout(() => this._processNotification(notification), retryDelay);
+        } else {
+          logger.warn(`[非阻断] 通知 ${notification.id} 已达最大重试次数，不再重试`);
+        }
+      }
     } catch (error) {
-      logger.error(`推送通知失败: ${notification.id}`, error);
+      logger.error(`[非阻断] 处理通知异常: ${notification.id}`, error.message);
       notification.status = 'failed';
       notification.errorMsg = error.message;
 
@@ -75,64 +106,75 @@ class NotificationService {
       }
     }
 
-    await notification.save();
+    try {
+      await notification.save();
+    } catch (saveError) {
+      logger.error('[非阻断] 保存通知状态失败', saveError.message);
+    }
+
     return notification;
   }
 
   async _sendWecom(notification) {
-    if (!config.push.wecomWebhook) {
-      throw new Error('企业微信Webhook未配置');
+    try {
+      if (!config.push.wecomWebhook) {
+        throw new Error('企业微信Webhook未配置');
+      }
+
+      const content = `${notification.title}\n\n${notification.content || ''}`;
+
+      const payload = {
+        msgtype: 'markdown',
+        markdown: { content },
+      };
+
+      if (notification.receiverType === 'group') {
+        payload.markdown.content = `【体检系统通知】\n${content}`;
+      }
+
+      const response = await axios.post(config.push.wecomWebhook, payload, {
+        timeout: 10000,
+      });
+
+      if (response.data.errcode !== 0) {
+        throw new Error(`企业微信推送失败: ${response.data.errmsg}`);
+      }
+
+      return { success: true };
+    } catch (error) {
+      logger.warn('[非阻断] 企业微信推送失败', error.message);
+      return { success: false, error: error.message };
     }
-
-    const content = `${notification.title}\n\n${notification.content || ''}`;
-
-    const payload = {
-      msgtype: 'markdown',
-      markdown: { content },
-    };
-
-    if (notification.receiverType === 'group') {
-      payload.markdown.content = `【体检系统通知】\n${content}`;
-    }
-
-    const response = await axios.post(config.push.wecomWebhook, payload, {
-      timeout: 10000,
-    });
-
-    if (response.data.errcode !== 0) {
-      throw new Error(`企业微信推送失败: ${response.data.errmsg}`);
-    }
-
-    return true;
   }
 
   async pushWarningToWecomGroup(warningTicket, receivers = []) {
-    if (!config.push.wecomWebhook) {
-      logger.warn('企业微信Webhook未配置，跳过群推送');
-      return false;
-    }
+    try {
+      if (!config.push.wecomWebhook) {
+        logger.warn('[非阻断] 企业微信Webhook未配置，跳过群推送');
+        return { success: false, reason: 'webhook_not_configured' };
+      }
 
-    const levelColors = {
-      low: 'info',
-      medium: 'warning',
-      high: 'warning',
-      critical: 'warning',
-    };
+      const levelColors = {
+        low: 'info',
+        medium: 'warning',
+        high: 'warning',
+        critical: 'warning',
+      };
 
-    const levelLabels = {
-      low: '低',
-      medium: '中',
-      high: '高',
-      critical: '严重',
-    };
+      const levelLabels = {
+        low: '低',
+        medium: '中',
+        high: '高',
+        critical: '严重',
+      };
 
-    const abnormalList = warningTicket.abnormalItems
-      ? warningTicket.abnormalItems.map((i) => `- ${i.itemName}: ${i.value}`).join('\n')
-      : '';
+      const abnormalList = warningTicket.abnormalItems
+        ? warningTicket.abnormalItems.map((i) => `- ${i.itemName}: ${i.value}`).join('\n')
+        : '';
 
-    const receiverText = receivers.length > 0 ? `\n\n**通知人员:**\n${receivers.map((r) => r.name).join('、')}` : '';
+      const receiverText = receivers.length > 0 ? `\n\n**通知人员:**\n${receivers.map((r) => r.name).join('、')}` : '';
 
-    const content = `
+      const content = `
 # 【健康预警通知】
 
 > **预警级别**: <font color="${levelColors[warningTicket.warningLevel] || 'warning'}">${levelLabels[warningTicket.warningLevel] || ''}</font>
@@ -155,7 +197,6 @@ ${warningTicket.suggestions ? `**处理建议:**\n${warningTicket.suggestions}` 
 ---
 <@all>${receiverText}`.trim();
 
-    try {
       const response = await axios.post(
         config.push.wecomWebhook,
         {
@@ -169,48 +210,63 @@ ${warningTicket.suggestions ? `**处理建议:**\n${warningTicket.suggestions}` 
         throw new Error(`企业微信群推送失败: ${response.data.errmsg}`);
       }
 
-      logger.info(`预警工单${warningTicket.ticketNo}已推送到企业微信群`);
-      return true;
+      logger.info(`[非阻断] 预警工单${warningTicket.ticketNo}已推送到企业微信群`);
+      return { success: true };
     } catch (error) {
-      logger.error('推送企业微信群失败', error);
-      throw error;
+      logger.error('[非阻断] 推送企业微信群失败', error.message);
+      return { success: false, error: error.message };
     }
   }
 
   async _sendDingtalk(notification) {
-    if (!config.push.dingtalkWebhook) {
-      throw new Error('钉钉Webhook未配置');
-    }
+    try {
+      if (!config.push.dingtalkWebhook) {
+        throw new Error('钉钉Webhook未配置');
+      }
 
-    const content = `# ${notification.title}\n\n${notification.content || ''}`;
+      const content = `# ${notification.title}\n\n${notification.content || ''}`;
 
-    const response = await axios.post(
-      config.push.dingtalkWebhook,
-      {
-        msgtype: 'markdown',
-        markdown: {
-          title: notification.title.substring(0, 32),
-          text: content,
+      const response = await axios.post(
+        config.push.dingtalkWebhook,
+        {
+          msgtype: 'markdown',
+          markdown: {
+            title: notification.title.substring(0, 32),
+            text: content,
+          },
         },
-      },
-      { timeout: 10000 }
-    );
+        { timeout: 10000 }
+      );
 
-    if (response.data.errcode !== 0) {
-      throw new Error(`钉钉推送失败: ${response.data.errmsg}`);
+      if (response.data.errcode !== 0) {
+        throw new Error(`钉钉推送失败: ${response.data.errmsg}`);
+      }
+
+      return { success: true };
+    } catch (error) {
+      logger.warn('[非阻断] 钉钉推送失败', error.message);
+      return { success: false, error: error.message };
     }
-
-    return true;
   }
 
   async _sendEmail(notification) {
-    logger.info(`模拟发送邮件: 收件人ID=${notification.receiverId}, 标题=${notification.title}`);
-    return true;
+    try {
+      logger.info(`[非阻断] 模拟发送邮件: 收件人ID=${notification.receiverId}, 标题=${notification.title}`);
+      return { success: true };
+    } catch (error) {
+      logger.warn('[非阻断] 邮件发送失败', error.message);
+      return { success: false, error: error.message };
+    }
   }
 
   async _sendSms(notification) {
-    logger.info(`模拟发送短信: 接收人ID=${notification.receiverId}, 内容=${notification.title}`);
-    return true;
+    try {
+      logger.info(`[非阻断] 模拟发送短信: 接收人ID=${notification.receiverId}, 内容=${notification.title}`);
+      return { success: true };
+    } catch (error) {
+      logger.warn('[非阻断] 短信发送失败', error.message);
+      return { success: false, error: error.message };
+    }
   }
 
   async markAsRead(notificationIds, userId) {

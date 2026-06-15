@@ -373,9 +373,11 @@ class StatisticsReportService {
 
         doc.end();
 
-        stream.on('finish', () => {
+        stream.on('finish', async () => {
           logger.info(`PDF报表生成: ${fileName}`);
-          resolve({ filePath, fileName, url: `/reports/${fileName}` });
+          const summary = this._extractReportSummary(stats, itemRankings, trend, year, half, deptId);
+          await this._saveReportSummary(fileName, 'pdf', summary);
+          resolve({ filePath, fileName, url: `/reports/${fileName}`, summary });
         });
         stream.on('error', reject);
       } catch (e) {
@@ -691,7 +693,10 @@ class StatisticsReportService {
     await workbook.xlsx.writeFile(filePath);
     logger.info(`Excel报表生成: ${fileName}`);
 
-    return { filePath, fileName, url: `/reports/${fileName}` };
+    const summary = this._extractReportSummary(stats, itemRankings, trend, year, half, deptId);
+    await this._saveReportSummary(fileName, 'excel', summary);
+
+    return { filePath, fileName, url: `/reports/${fileName}`, summary };
   }
 
   _buildSummarySheet(workbook, stats, year, half) {
@@ -1025,7 +1030,194 @@ class StatisticsReportService {
     logger.info('Excel趋势图生成完成');
   }
 
-  async getReportHistory() {
+  _extractReportSummary(stats, itemRankings, trend, year, half, deptId) {
+    const s = stats.summary;
+    const topAbnormal = (itemRankings.list || []).slice(0, 5).map((item) => ({
+      itemName: item.itemName,
+      abnormalCount: item.abnormalCount,
+      abnormalRate: item.abnormalRate,
+    }));
+
+    const trendData = {
+      completionRate: (trend.trendData || []).map((t) => ({
+        year: t.year,
+        completionRate: t.completionRate,
+      })),
+      abnormalRate: (trend.trendData || []).map((t) => ({
+        year: t.year,
+        abnormalRate: t.abnormalRate,
+      })),
+      budgetUsageRate: (trend.trendData || []).map((t) => ({
+        year: t.year,
+        budgetUsageRate: t.budgetUsageRate,
+      })),
+      warningCount: (trend.trendData || []).map((t) => ({
+        year: t.year,
+        warningCount: t.warningCount,
+      })),
+    };
+
+    return {
+      year,
+      half,
+      deptId,
+      periodText: `${year}年${half === 'all' ? '全年' : half === '1' ? '上半年' : '下半年'}`,
+      summary: {
+        employeeCount: s.employeeCount,
+        completionRate: s.completionRate,
+        abnormalRate: s.abnormalRate,
+        warningCount: s.warningCount,
+        budgetUsageRate: s.budgetUsageRate,
+        totalDepartments: stats.totalDepartments,
+      },
+      topAbnormal,
+      trendData,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  async _saveReportSummary(fileName, type, summary) {
+    try {
+      const summaryDir = path.resolve(config.storage.reportPath, 'summaries');
+      if (!fs.existsSync(summaryDir)) {
+        fs.mkdirSync(summaryDir, { recursive: true });
+      }
+
+      const baseName = fileName.replace(/\.(pdf|xlsx)$/, '');
+      const summaryPath = path.join(summaryDir, `${baseName}.json`);
+      fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
+      logger.info(`报表摘要已保存: ${summaryPath}`);
+    } catch (e) {
+      logger.error('保存报表摘要失败', e.message);
+    }
+  }
+
+  async _loadReportSummary(fileName) {
+    try {
+      const summaryDir = path.resolve(config.storage.reportPath, 'summaries');
+      const baseName = fileName.replace(/\.(pdf|xlsx)$/, '');
+      const summaryPath = path.join(summaryDir, `${baseName}.json`);
+
+      if (fs.existsSync(summaryPath)) {
+        return JSON.parse(fs.readFileSync(summaryPath, 'utf-8'));
+      }
+      return null;
+    } catch (e) {
+      logger.warn('加载报表摘要失败', fileName, e.message);
+      return null;
+    }
+  }
+
+  _parseReportFileName(fileName) {
+    const match = fileName.match(/体检统计报表_(\d{4})年(?:(上半年|下半年))?_(\d+)\.(pdf|xlsx)/);
+    if (match) {
+      const [, year, halfText, timestamp, type] = match;
+      return {
+        year: parseInt(year),
+        half: halfText === '上半年' ? '1' : halfText === '下半年' ? '2' : 'all',
+        timestamp: parseInt(timestamp),
+        type: type === 'pdf' ? 'pdf' : 'excel',
+      };
+    }
+    return null;
+  }
+
+  async getReportHistory(filters = {}, options = {}) {
+    const { year, type, deptId, page = 1, pageSize = 20 } = filters;
+    const reportDir = path.resolve(config.storage.reportPath);
+    if (!fs.existsSync(reportDir)) {
+      return { list: [], total: 0, page, pageSize };
+    }
+
+    let files = fs.readdirSync(reportDir).filter((f) =>
+      f.endsWith('.pdf') || f.endsWith('.xlsx')
+    );
+
+    files = files.filter((f) => {
+      const info = this._parseReportFileName(f);
+      if (!info) return false;
+
+      if (year && info.year !== parseInt(year)) return false;
+      if (type && info.type !== type) return false;
+
+      return true;
+    });
+
+    const filesWithInfo = files
+      .map((f) => {
+        const fullPath = path.join(reportDir, f);
+        const stat = fs.statSync(fullPath);
+        const info = this._parseReportFileName(f);
+
+        return {
+          fileName: f,
+          url: `/reports/${f}`,
+          size: stat.size,
+          createdAt: stat.birthtime,
+          type: info?.type || (f.endsWith('.pdf') ? 'pdf' : 'excel'),
+          year: info?.year,
+          half: info?.half,
+          timestamp: info?.timestamp,
+        };
+      })
+      .sort((a, b) => b.createdAt - a.createdAt);
+
+    const total = filesWithInfo.length;
+    const start = (page - 1) * pageSize;
+    const pagedFiles = filesWithInfo.slice(start, start + pageSize);
+
+    const list = await Promise.all(
+      pagedFiles.map(async (f) => {
+        const summary = await this._loadReportSummary(f.fileName);
+        return {
+          ...f,
+          summary: summary ? {
+            periodText: summary.periodText,
+            employeeCount: summary.summary?.employeeCount,
+            completionRate: summary.summary?.completionRate,
+            abnormalRate: summary.summary?.abnormalRate,
+            budgetUsageRate: summary.summary?.budgetUsageRate,
+            generatedAt: summary.generatedAt,
+          } : null,
+        };
+      })
+    );
+
+    return { list, total, page, pageSize };
+  }
+
+  async getReportPreview(fileName) {
+    const reportDir = path.resolve(config.storage.reportPath);
+    const filePath = path.join(reportDir, fileName);
+
+    if (!fs.existsSync(filePath)) {
+      throw new Error('报表文件不存在');
+    }
+
+    const stat = fs.statSync(filePath);
+    const summary = await this._loadReportSummary(fileName);
+    const info = this._parseReportFileName(fileName);
+
+    if (!summary) {
+      const year = info?.year || new Date().getFullYear();
+      const half = info?.half || 'all';
+      const stats = await this.getDeptDailyStats(null, year, half);
+      const itemRankings = await this.getAbnormalItemsRanking(year);
+      const trend = await this.getTrendAnalysis(5);
+      return this._extractReportSummary(stats, itemRankings, trend, year, half, null);
+    }
+
+    return {
+      fileName,
+      url: `/reports/${fileName}`,
+      size: stat.size,
+      createdAt: stat.birthtime,
+      type: info?.type || (fileName.endsWith('.pdf') ? 'pdf' : 'excel'),
+      ...summary,
+    };
+  }
+
+  async getReportYears() {
     const reportDir = path.resolve(config.storage.reportPath);
     if (!fs.existsSync(reportDir)) {
       return [];
@@ -1035,19 +1227,15 @@ class StatisticsReportService {
       f.endsWith('.pdf') || f.endsWith('.xlsx')
     );
 
-    return files
-      .map((f) => {
-        const fullPath = path.join(reportDir, f);
-        const stat = fs.statSync(fullPath);
-        return {
-          fileName: f,
-          url: `/reports/${f}`,
-          size: stat.size,
-          createdAt: stat.birthtime,
-          type: f.endsWith('.pdf') ? 'pdf' : 'excel',
-        };
-      })
-      .sort((a, b) => b.createdAt - a.createdAt);
+    const years = new Set();
+    files.forEach((f) => {
+      const info = this._parseReportFileName(f);
+      if (info) {
+        years.add(info.year);
+      }
+    });
+
+    return Array.from(years).sort((a, b) => b - a);
   }
 }
 
