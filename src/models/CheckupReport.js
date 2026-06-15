@@ -150,6 +150,19 @@ CheckupReport.init(
       comment: '上传人ID（手动上传时）',
       field: 'uploader_id',
     },
+    fetchError: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      comment: '抓取失败错误原因',
+      field: 'fetch_error',
+    },
+    fetchRetryCount: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: false,
+      defaultValue: 0,
+      comment: '抓取重试次数',
+      field: 'fetch_retry_count',
+    },
     status: {
       type: DataTypes.TINYINT.UNSIGNED,
       allowNull: false,

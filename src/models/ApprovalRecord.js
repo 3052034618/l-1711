@@ -48,6 +48,13 @@ ApprovalRecord.init(
       defaultValue: 'pending',
       comment: '审批结果',
     },
+    isOverBudget: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      comment: '是否超预算审批',
+      field: 'is_over_budget',
+    },
     reason: {
       type: DataTypes.STRING(500),
       allowNull: true,

@@ -140,6 +140,13 @@ Appointment.init(
       comment: '当前审批层级',
       field: 'approval_level',
     },
+    isOverBudget: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      comment: '是否超预算申请',
+      field: 'is_over_budget',
+    },
     rejectReason: {
       type: DataTypes.STRING(500),
       allowNull: true,

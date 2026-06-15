@@ -49,6 +49,7 @@ class ApprovalService {
       appointment.status = 'approved';
       appointment.approvalStatus = 'approved';
       appointment.approvalLevel = 0;
+      appointment.currentApproverId = null;
       await appointment.save({ transaction });
 
       await BudgetService.freezeBudget(
@@ -56,15 +57,25 @@ class ApprovalService {
         appointment.year,
         appointment.half,
         totalAmount,
-        transaction
+        transaction,
+        false
       );
 
       logger.info(`预约${orderNo}免审批自动通过`);
-      return { status: 'auto_approved', approvers: [], records: [] };
+      return {
+        status: 'auto_approved',
+        approvalLevel: 0,
+        totalLevels: 0,
+        currentApprover: null,
+        approvers: [],
+        records: [],
+        isOverBudget: false,
+      };
     }
 
     const level = budgetCheck.approvalLevel;
     const approvers = await this.getApprovers(deptId, level + 1);
+    const isOverBudget = !budgetCheck.sufficient;
 
     if (approvers.length === 0) {
       throw new Error('未找到审批人，请联系HR配置部门主管');
@@ -74,31 +85,57 @@ class ApprovalService {
     appointment.approvalStatus = 'pending';
     appointment.approvalLevel = 1;
     appointment.currentApproverId = approvers[0].userId;
+    appointment.isOverBudget = isOverBudget;
     await appointment.save({ transaction });
+
+    const firstApprover = approvers[0];
+    let approverName = '待确认';
+    try {
+      const approverUser = await User.findByPk(firstApprover.userId, { transaction });
+      if (approverUser) {
+        approverName = approverUser.realName || approverUser.username;
+      }
+    } catch (e) {
+      logger.warn('查询审批人信息失败，继续流程', e.message);
+    }
 
     const firstRecord = await ApprovalRecord.create(
       {
         appointmentId,
         orderNo,
-        approverId: approvers[0].userId,
-        approverName: '待查询',
+        approverId: firstApprover.userId,
+        approverName,
         approvalLevel: 1,
         status: 'pending',
+        isOverBudget,
       },
       { transaction }
     );
 
-    this._notifyApprover(approvers[0].userId, appointment);
+    setImmediate(() => {
+      this._notifyApprover(firstApprover.userId, appointment).catch((e) => {
+        logger.error(`[非阻断] 发送审批通知失败，预约已创建: ${appointment.orderNo}`, e.message);
+      });
+    });
 
-    logger.info(`预约${orderNo}发起审批，第1级审批人：${approvers[0].userId}`);
+    logger.info(`预约${orderNo}发起审批，第1级审批人：${approverName} (${firstApprover.userId})`);
 
     return {
       status: 'pending',
-      currentLevel: 1,
+      approvalLevel: 1,
       totalLevels: approvers.length,
-      currentApprover: approvers[0],
-      approvers,
+      currentLevel: 1,
+      currentApprover: {
+        ...firstApprover,
+        name: approverName,
+      },
+      approvers: approvers.map((a, idx) => ({
+        ...a,
+        name: idx === 0 ? approverName : '待确认',
+      })),
       firstRecord,
+      isOverBudget,
+      budgetShortage: isOverBudget ? (totalAmount - budgetCheck.available).toFixed(2) : 0,
     };
   }
 
@@ -162,16 +199,22 @@ class ApprovalService {
           appointment.year,
           appointment.half,
           appointment.totalAmount,
-          t
+          t,
+          !!appointment.isOverBudget
         );
 
-        await this._notifyApplicant(appointment, 'approved', remark);
+        setImmediate(() => {
+          this._notifyApplicant(appointment, 'approved', remark).catch((e) => {
+            logger.error('[非阻断] 发送审批通过通知失败', e.message);
+          });
+        });
 
         return {
           success: true,
           message: '审批通过',
           status: 'approved',
           isFinal: true,
+          isOverBudget: !!appointment.isOverBudget,
         };
       }
 

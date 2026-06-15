@@ -37,40 +37,78 @@ class ReportService {
       throw new ValidationError('体检未完成，无法抓取报告');
     }
 
-    const existingReport = await CheckupReport.findOne({
+    let existingReport = await CheckupReport.findOne({
       where: { checkupOrderId },
     });
 
-    if (existingReport && existingReport.status === 1) {
-      throw new ValidationError('该体检报告已存在');
+    if (existingReport && existingReport.status === 1 && existingReport.fetchStatus === 'success') {
+      throw new ValidationError('该体检报告已存在且已成功获取');
+    }
+
+    if (!existingReport) {
+      existingReport = await CheckupReport.create({
+        reportNo: generateOrderNo(),
+        checkupOrderId,
+        orderNo: order.orderNo,
+        employeeId: order.employeeId,
+        deptId: order.deptId,
+        hospitalId: order.hospitalId,
+        hospitalName: order.hospitalName,
+        checkupDate: order.checkupDate,
+        reportDate: new Date().toISOString().split('T')[0],
+        year: order.appointment ? order.appointment.year : new Date().getFullYear(),
+        half: order.appointment ? order.appointment.half : '1',
+        source: 'hospital',
+        items: [],
+        fetchStatus: 'fetching',
+        fetchRetryCount: 0,
+        ocrStatus: 'not_needed',
+        status: 0,
+      });
+    } else {
+      existingReport.fetchStatus = 'fetching';
+      existingReport.fetchRetryCount = (existingReport.fetchRetryCount || 0) + 1;
+      await existingReport.save();
     }
 
     let reportData;
     try {
       reportData = await this._callHospitalFetchApi(order);
-    } catch (error) {
-      if (existingReport) {
-        existingReport.fetchStatus = 'failed';
-        existingReport.save();
+      if (!reportData || !reportData.items || reportData.items.length === 0) {
+        throw new Error('医院返回数据为空或格式无效');
       }
-      throw error;
+    } catch (error) {
+      existingReport.fetchStatus = 'failed';
+      existingReport.fetchError = `${error.message || '未知错误'}（时间：${new Date().toLocaleString('zh-CN')}）`;
+      existingReport.status = 0;
+      await existingReport.save();
+
+      logger.error(`抓取医院报告失败 [${order.orderNo}]: ${error.message}`);
+      throw new Error(`报告抓取失败：${error.message || '请稍后重试'}`);
     }
 
-    return this._createReportFromHospitalData(order, reportData, operatorId);
+    return this._createReportFromHospitalData(order, reportData, operatorId, existingReport);
   }
 
   async _callHospitalFetchApi(order) {
     const hospital = order.hospital;
 
-    if (!hospital || !hospital.fetchEnabled) {
-      logger.info(`医院未启用报告抓取，使用模拟数据: ${order.orderNo}`);
-      return this._generateMockReportData(order);
+    if (!hospital) {
+      throw new Error('体检单未关联医院信息');
+    }
+
+    if (!hospital.fetchEnabled) {
+      throw new Error('该医院未启用报告自动抓取功能');
+    }
+
+    const endpoint = hospital.apiEndpoint || config.hospital.apiBase;
+    const apiKey = hospital.apiKey || config.hospital.apiKey;
+
+    if (!endpoint) {
+      throw new Error('医院API接口未配置');
     }
 
     try {
-      const endpoint = hospital.apiEndpoint || config.hospital.apiBase;
-      const apiKey = hospital.apiKey || config.hospital.apiKey;
-
       const response = await axios.get(
         `${endpoint}/checkup/reports/${order.hospitalOrderNo || order.orderNo}`,
         {
@@ -79,430 +117,23 @@ class ReportService {
         }
       );
 
+      if (!response.data || !response.data.items) {
+        throw new Error('医院返回数据格式不正确，缺少items字段');
+      }
+
+      logger.info(`成功获取医院报告: ${order.orderNo}, 指标数: ${response.data.items.length}`);
       return response.data;
     } catch (error) {
-      logger.warn(`调用医院接口失败，使用模拟数据: ${order.orderNo}`, error.message);
-      return this._generateMockReportData(order);
-    }
-  }
-
-  _generateMockReportData(order) {
-    const age = order.age || calculateAge(order.employee && order.employee.birthday);
-    const isMale = order.gender === 'male';
-
-    const baseItems = [
-      {
-        itemCode: 'height',
-        itemName: '身高',
-        itemCategory: '一般检查',
-        resultValue: (165 + Math.random() * 20).toFixed(1),
-        numericValue: 165 + Math.random() * 20,
-        unit: 'cm',
-        refRange: '',
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'weight',
-        itemName: '体重',
-        itemCategory: '一般检查',
-        resultValue: (55 + Math.random() * 30).toFixed(1),
-        numericValue: 55 + Math.random() * 30,
-        unit: 'kg',
-        refRange: '',
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'bmi',
-        itemName: 'BMI',
-        itemCategory: '一般检查',
-        resultValue: '',
-        numericValue: 0,
-        unit: '',
-        refRange: '18.5-23.9',
-        refRangeMin: 18.5,
-        refRangeMax: 23.9,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'bp_sys',
-        itemName: '收缩压',
-        itemCategory: '血压',
-        resultValue: '',
-        numericValue: 0,
-        unit: 'mmHg',
-        refRange: '90-140',
-        refRangeMin: 90,
-        refRangeMax: 140,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'bp_dia',
-        itemName: '舒张压',
-        itemCategory: '血压',
-        resultValue: '',
-        numericValue: 0,
-        unit: 'mmHg',
-        refRange: '60-90',
-        refRangeMin: 60,
-        refRangeMax: 90,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'wbc',
-        itemName: '白细胞计数',
-        itemCategory: '血常规',
-        resultValue: '',
-        numericValue: 0,
-        unit: '10^9/L',
-        refRange: '4.0-10.0',
-        refRangeMin: 4.0,
-        refRangeMax: 10.0,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'rbc',
-        itemName: '红细胞计数',
-        itemCategory: '血常规',
-        resultValue: '',
-        numericValue: 0,
-        unit: '10^12/L',
-        refRange: isMale ? '4.3-5.8' : '3.8-5.1',
-        refRangeMin: isMale ? 4.3 : 3.8,
-        refRangeMax: isMale ? 5.8 : 5.1,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'hgb',
-        itemName: '血红蛋白',
-        itemCategory: '血常规',
-        resultValue: '',
-        numericValue: 0,
-        unit: 'g/L',
-        refRange: isMale ? '130-175' : '115-150',
-        refRangeMin: isMale ? 130 : 115,
-        refRangeMax: isMale ? 175 : 150,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'plt',
-        itemName: '血小板计数',
-        itemCategory: '血常规',
-        resultValue: '',
-        numericValue: 0,
-        unit: '10^9/L',
-        refRange: '100-300',
-        refRangeMin: 100,
-        refRangeMax: 300,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'alt',
-        itemName: '谷丙转氨酶(ALT)',
-        itemCategory: '肝功能',
-        resultValue: '',
-        numericValue: 0,
-        unit: 'U/L',
-        refRange: '0-40',
-        refRangeMin: 0,
-        refRangeMax: 40,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'ast',
-        itemName: '谷草转氨酶(AST)',
-        itemCategory: '肝功能',
-        resultValue: '',
-        numericValue: 0,
-        unit: 'U/L',
-        refRange: '0-40',
-        refRangeMin: 0,
-        refRangeMax: 40,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'tc',
-        itemName: '总胆固醇(TC)',
-        itemCategory: '血脂',
-        resultValue: '',
-        numericValue: 0,
-        unit: 'mmol/L',
-        refRange: '<5.2',
-        refRangeMin: 0,
-        refRangeMax: 5.2,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'tg',
-        itemName: '甘油三酯(TG)',
-        itemCategory: '血脂',
-        resultValue: '',
-        numericValue: 0,
-        unit: 'mmol/L',
-        refRange: '<1.7',
-        refRangeMin: 0,
-        refRangeMax: 1.7,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'ldl',
-        itemName: '低密度脂蛋白(LDL)',
-        itemCategory: '血脂',
-        resultValue: '',
-        numericValue: 0,
-        unit: 'mmol/L',
-        refRange: '<3.4',
-        refRangeMin: 0,
-        refRangeMax: 3.4,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'hdl',
-        itemName: '高密度脂蛋白(HDL)',
-        itemCategory: '血脂',
-        resultValue: '',
-        numericValue: 0,
-        unit: 'mmol/L',
-        refRange: '>1.0',
-        refRangeMin: 1.0,
-        refRangeMax: null,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'fbg',
-        itemName: '空腹血糖(FBG)',
-        itemCategory: '血糖',
-        resultValue: '',
-        numericValue: 0,
-        unit: 'mmol/L',
-        refRange: '3.9-6.1',
-        refRangeMin: 3.9,
-        refRangeMax: 6.1,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'creatinine',
-        itemName: '肌酐',
-        itemCategory: '肾功能',
-        resultValue: '',
-        numericValue: 0,
-        unit: 'umol/L',
-        refRange: isMale ? '57-111' : '41-81',
-        refRangeMin: isMale ? 57 : 41,
-        refRangeMax: isMale ? 111 : 81,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'bun',
-        itemName: '尿素氮',
-        itemCategory: '肾功能',
-        resultValue: '',
-        numericValue: 0,
-        unit: 'mmol/L',
-        refRange: '2.9-8.2',
-        refRangeMin: 2.9,
-        refRangeMax: 8.2,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-      {
-        itemCode: 'uric_acid',
-        itemName: '尿酸',
-        itemCategory: '肾功能',
-        resultValue: '',
-        numericValue: 0,
-        unit: 'umol/L',
-        refRange: isMale ? '208-428' : '155-357',
-        refRangeMin: isMale ? 208 : 155,
-        refRangeMax: isMale ? 428 : 357,
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      },
-    ];
-
-    if (!isMale) {
-      baseItems.push(
-        {
-          itemCode: 'mammary',
-          itemName: '乳腺彩超',
-          itemCategory: '专科检查',
-          resultValue: '未见明显异常',
-          numericValue: null,
-          unit: '',
-          refRange: '',
-          isAbnormal: false,
-          abnormalLevel: 'normal',
-        },
-        {
-          itemCode: 'gynecology',
-          itemName: '妇科检查',
-          itemCategory: '专科检查',
-          resultValue: '未见明显异常',
-          numericValue: null,
-          unit: '',
-          refRange: '',
-          isAbnormal: false,
-          abnormalLevel: 'normal',
-        }
-      );
-    }
-
-    if (isMale) {
-      baseItems.push({
-        itemCode: 'prostate',
-        itemName: '前列腺彩超',
-        itemCategory: '专科检查',
-        resultValue: '未见明显异常',
-        numericValue: null,
-        unit: '',
-        refRange: '',
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      });
-    }
-
-    if (age >= 40) {
-      baseItems.push({
-        itemCode: 'ecg',
-        itemName: '心电图',
-        itemCategory: '辅助检查',
-        resultValue: '窦性心律，正常心电图',
-        numericValue: null,
-        unit: '',
-        refRange: '',
-        isAbnormal: false,
-        abnormalLevel: 'normal',
-      });
-    }
-
-    const numericItems = baseItems.filter((i) => i.numericValue !== null && i.refRangeMax);
-    const randomSeed = Math.random();
-
-    numericItems.forEach((item) => {
-      if (!item.numericValue || item.numericValue === 0) {
-        const min = item.refRangeMin || 0;
-        const max = item.refRangeMax || 100;
-        const range = max - min;
-        const base = min + range * (0.2 + Math.random() * 0.6);
-        item.numericValue = roundTo(base, 2);
+      let errorMsg = error.message;
+      if (error.response) {
+        errorMsg = `HTTP ${error.response.status}: ${error.response.data?.message || error.response.statusText}`;
+      } else if (error.code === 'ECONNABORTED') {
+        errorMsg = '请求超时，医院接口响应过慢';
+      } else if (error.code === 'ECONNREFUSED') {
+        errorMsg = '无法连接到医院接口服务器';
       }
-    });
-
-    const abnormalSeed = Math.random();
-    const abnormalCount = abnormalSeed < 0.3 ? 0 : abnormalSeed < 0.7 ? 1 : 2 + Math.floor(Math.random() * 3);
-
-    const candidates = numericItems.filter(
-      (i) => ['fbg', 'tc', 'tg', 'ldl', 'hdl', 'bp_sys', 'bp_dia', 'alt', 'uric_acid', 'bmi'].includes(i.itemCode)
-    );
-
-    for (let i = 0; i < Math.min(abnormalCount, candidates.length); i++) {
-      const idx = Math.floor(Math.random() * candidates.length);
-      const target = candidates[idx];
-      const levelRand = Math.random();
-
-      if (target.refRangeMax) {
-        if (levelRand < 0.6) {
-          target.numericValue = roundTo(target.refRangeMax * (1.05 + Math.random() * 0.15), 2);
-          target.abnormalLevel = 'mild';
-          target.isAbnormal = true;
-          target.isHighRisk = false;
-        } else if (levelRand < 0.9) {
-          target.numericValue = roundTo(target.refRangeMax * (1.2 + Math.random() * 0.3), 2);
-          target.abnormalLevel = 'moderate';
-          target.isAbnormal = true;
-          target.isHighRisk = false;
-        } else {
-          target.numericValue = roundTo(target.refRangeMax * (1.5 + Math.random() * 0.5), 2);
-          target.abnormalLevel = 'severe';
-          target.isAbnormal = true;
-          target.isHighRisk = true;
-        }
-      }
-
-      if (target.itemCode === 'hdl' && target.refRangeMin) {
-        target.numericValue = roundTo(target.refRangeMin * (0.7 + Math.random() * 0.2), 2);
-        target.abnormalLevel = 'mild';
-        target.isAbnormal = true;
-      }
-
-      target.resultValue = target.numericValue.toString();
-      candidates.splice(idx, 1);
+      throw new Error(errorMsg);
     }
-
-    const bmiItem = baseItems.find((i) => i.itemCode === 'bmi');
-    const weightItem = baseItems.find((i) => i.itemCode === 'weight');
-    const heightItem = baseItems.find((i) => i.itemCode === 'height');
-    if (bmiItem && weightItem && heightItem) {
-      const h = parseFloat(heightItem.numericValue) / 100;
-      const w = parseFloat(weightItem.numericValue);
-      if (h > 0) {
-        const bmi = roundTo(w / (h * h), 1);
-        bmiItem.numericValue = bmi;
-        bmiItem.resultValue = bmi.toString();
-        if (bmi > bmiItem.refRangeMax) {
-          bmiItem.isAbnormal = true;
-          bmiItem.abnormalLevel = bmi > 30 ? 'moderate' : 'mild';
-        }
-      }
-    }
-
-    const bpSys = baseItems.find((i) => i.itemCode === 'bp_sys');
-    const bpDia = baseItems.find((i) => i.itemCode === 'bp_dia');
-    if (!bpSys.numericValue || bpSys.numericValue === 0) {
-      const base = 110 + Math.random() * 30;
-      bpSys.numericValue = roundTo(base, 0);
-      bpSys.resultValue = bpSys.numericValue.toString();
-      if (bpSys.numericValue > bpSys.refRangeMax) {
-        bpSys.isAbnormal = true;
-        bpSys.abnormalLevel = bpSys.numericValue > 160 ? 'moderate' : 'mild';
-      }
-    }
-    if (!bpDia.numericValue || bpDia.numericValue === 0) {
-      bpDia.numericValue = roundTo(parseFloat(bpSys.numericValue) * 0.7, 0);
-      bpDia.resultValue = bpDia.numericValue.toString();
-      if (bpDia.numericValue > bpDia.refRangeMax) {
-        bpDia.isAbnormal = true;
-      }
-    }
-
-    const totalAbnormal = baseItems.filter((i) => i.isAbnormal).length;
-    const totalHighRisk = baseItems.filter((i) => i.isHighRisk).length;
-
-    const score = Math.max(
-      0,
-      Math.min(
-        100,
-        100 - totalAbnormal * 5 - totalHighRisk * 15 - (age > 50 ? 5 : 0)
-      )
-    );
-
-    return {
-      reportNo: generateOrderNo(),
-      reportDate: new Date().toISOString().split('T')[0],
-      checkupDate: order.checkupDate || new Date().toISOString().split('T')[0],
-      totalScore: score,
-      summary: totalAbnormal > 0 ? `本次体检发现${totalAbnormal}项异常指标，建议定期复查。` : '本次体检各项指标基本正常，建议保持健康生活方式。',
-      suggestions: this._generateSuggestions(baseItems),
-      items: baseItems,
-      abnormalCount: totalAbnormal,
-      highRiskCount: totalHighRisk,
-    };
   }
 
   _generateSuggestions(items) {
@@ -541,37 +172,55 @@ class ReportService {
     return suggestions.join('\n\n');
   }
 
-  async _createReportFromHospitalData(order, reportData, operatorId) {
+  async _createReportFromHospitalData(order, reportData, operatorId, existingReport = null) {
     const result = await sequelize.transaction(async (t) => {
       const employee = order.employee;
       const appointment = order.appointment;
 
-      const report = await CheckupReport.create(
-        {
-          reportNo: reportData.reportNo || generateOrderNo(),
-          checkupOrderId: order.id,
-          orderNo: order.orderNo,
-          employeeId: order.employeeId,
-          deptId: order.deptId,
-          hospitalId: order.hospitalId,
-          hospitalName: order.hospitalName,
-          checkupDate: reportData.checkupDate || order.checkupDate,
-          reportDate: reportData.reportDate || new Date().toISOString().split('T')[0],
-          year: appointment ? appointment.year : new Date().getFullYear(),
-          half: appointment ? appointment.half : '1',
-          source: 'hospital',
-          totalScore: reportData.totalScore,
-          summary: reportData.summary,
-          suggestions: reportData.suggestions,
-          abnormalCount: reportData.abnormalCount || 0,
-          highRiskCount: reportData.highRiskCount || 0,
-          items: reportData.items,
-          fetchStatus: 'success',
-          ocrStatus: 'not_needed',
-          status: 1,
-        },
-        { transaction: t }
-      );
+      let report;
+      if (existingReport) {
+        report = existingReport;
+        report.reportNo = reportData.reportNo || report.reportNo;
+        report.totalScore = reportData.totalScore;
+        report.summary = reportData.summary;
+        report.suggestions = reportData.suggestions;
+        report.abnormalCount = reportData.abnormalCount || 0;
+        report.highRiskCount = reportData.highRiskCount || 0;
+        report.items = reportData.items;
+        report.fetchStatus = 'success';
+        report.fetchError = null;
+        report.status = 1;
+        await report.save({ transaction: t });
+
+        await ReportItem.destroy({ where: { reportId: report.id }, transaction: t });
+      } else {
+        report = await CheckupReport.create(
+          {
+            reportNo: reportData.reportNo || generateOrderNo(),
+            checkupOrderId: order.id,
+            orderNo: order.orderNo,
+            employeeId: order.employeeId,
+            deptId: order.deptId,
+            hospitalId: order.hospitalId,
+            hospitalName: order.hospitalName,
+            checkupDate: reportData.checkupDate || order.checkupDate,
+            reportDate: reportData.reportDate || new Date().toISOString().split('T')[0],
+            year: appointment ? appointment.year : new Date().getFullYear(),
+            half: appointment ? appointment.half : '1',
+            source: 'hospital',
+            totalScore: reportData.totalScore,
+            summary: reportData.summary,
+            suggestions: reportData.suggestions,
+            abnormalCount: reportData.abnormalCount || 0,
+            highRiskCount: reportData.highRiskCount || 0,
+            items: reportData.items,
+            fetchStatus: 'success',
+            ocrStatus: 'not_needed',
+            status: 1,
+          },
+          { transaction: t }
+        );
+      }
 
       const itemsWithHistory = await this._enrichItemsWithHistory(
         order.employeeId,

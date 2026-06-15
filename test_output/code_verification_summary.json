@@ -1,0 +1,163 @@
+{
+  "total": 39,
+  "passed": 39,
+  "failed": 0,
+  "details": [
+    {
+      "name": "语法检查: src/models/Budget.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/models/Appointment.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/models/ApprovalRecord.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/models/CheckupReport.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/services/BudgetService.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/services/ApprovalService.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/services/AppointmentService.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/services/CheckupOrderService.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/services/ReportService.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/services/ExternalReportService.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/services/StatisticsReportService.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "ApprovalService.initApprovalFlow - 通知异步发送不阻断",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "ApprovalService.initApprovalFlow - 返回审批人信息",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "AppointmentService.createAppointment - 返回增强",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "Budget模型 - 新增超预算字段",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "BudgetService.freezeBudget - 支持isOverBudget参数",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "BudgetService.consumeBudget - 支持isOverBudget参数",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "BudgetService.unfreezeBudget - 支持isOverBudget参数",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "ApprovalService.approve - 传递isOverBudget给预算冻结",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "CheckupOrderService.generateCheckupOrder - 传递isOverBudget",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "BudgetService._formatBudget - 返回超预算字段",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "ExternalReportService - _parseExcelFile方法存在",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "Excel解析 - 智能识别表头列映射",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "Excel解析 - 参考范围解析",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "Excel解析 - 异常级别判断",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "Excel解析 - 自动分类功能",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "ExternalReportService.uploadAndParse - 自动调用Excel解析",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "ReportService.fetchReportFromHospital - 失败不回退到mock",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "ReportService._callHospitalFetchApi - 详细错误分类",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "CheckupReport模型 - 新增失败字段",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "ReportService.fetchReportFromHospital - 重试计数",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "StatisticsReportService - _drawPDFChart方法存在",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "PDF报表 - 三大趋势图",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "StatisticsReportService - _buildTrendSheet方法存在",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "Excel报表 - 多图表支持",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "StatisticsReportService.getTrendAnalysis - 包含预算使用率",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "Appointment模型 - isOverBudget字段",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "ApprovalRecord模型 - isOverBudget字段",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "BudgetService.getAvailableBudget - 返回超预算字段",
+      "status": "✅ 通过"
+    }
+  ]
+}

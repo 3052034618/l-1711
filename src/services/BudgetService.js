@@ -44,6 +44,8 @@ class BudgetService {
         total: 0,
         used: 0,
         approved: 0,
+        overBudgetUsed: 0,
+        overBudgetApproved: 0,
         sufficient: false,
       };
     }
@@ -51,15 +53,22 @@ class BudgetService {
     const total = parseFloat(budget.totalAmount) || 0;
     const used = parseFloat(budget.usedAmount) || 0;
     const approved = parseFloat(budget.approvedAmount) || 0;
-    const available = total - used - approved;
+    const overBudgetUsed = parseFloat(budget.overBudgetUsedAmount) || 0;
+    const overBudgetApproved = parseFloat(budget.overBudgetApprovedAmount) || 0;
+    const normalAvailable = total - used - approved;
 
     return {
-      available,
+      available: normalAvailable,
+      normalAvailable,
       total,
       used,
       approved,
-      usedPercent: total > 0 ? ((used + approved) / total) * 100 : 0,
-      sufficient: available > 0,
+      overBudgetUsed,
+      overBudgetApproved,
+      usedPercent: total > 0 ? ((used + approved + overBudgetUsed + overBudgetApproved) / total) * 100 : 0,
+      normalUsedPercent: total > 0 ? ((used + approved) / total) * 100 : 0,
+      sufficient: normalAvailable > 0,
+      hasOverBudget: overBudgetUsed > 0 || overBudgetApproved > 0,
     };
   }
 
@@ -100,7 +109,7 @@ class BudgetService {
     };
   }
 
-  async freezeBudget(deptId, year, half, amount, transaction) {
+  async freezeBudget(deptId, year, half, amount, transaction, isOverBudget = false) {
     const budget = await Budget.findOne({
       where: { deptId, year, half },
       lock: transaction ? true : false,
@@ -111,18 +120,23 @@ class BudgetService {
       throw new Error('部门预算不存在，请先配置预算');
     }
 
-    const available = budget.availableAmount();
-    if (available < parseFloat(amount)) {
-      throw new Error(`预算不足，可用额度: ${available}, 申请金额: ${amount}`);
+    const numAmount = parseFloat(amount);
+
+    if (isOverBudget) {
+      budget.overBudgetApprovedAmount = parseFloat(budget.overBudgetApprovedAmount) + numAmount;
+    } else {
+      const available = budget.getNormalAvailable();
+      if (available < numAmount) {
+        throw new Error(`预算不足，可用额度: ${available}, 申请金额: ${amount}`);
+      }
+      budget.approvedAmount = parseFloat(budget.approvedAmount) + numAmount;
     }
 
-    budget.approvedAmount = parseFloat(budget.approvedAmount) + parseFloat(amount);
     await budget.save({ transaction });
-
     return this._formatBudget(budget);
   }
 
-  async consumeBudget(deptId, year, half, amount, transaction) {
+  async consumeBudget(deptId, year, half, amount, transaction, isOverBudget = false) {
     const budget = await Budget.findOne({
       where: { deptId, year, half },
       lock: true,
@@ -135,10 +149,15 @@ class BudgetService {
 
     const numAmount = parseFloat(amount);
 
-    if (parseFloat(budget.approvedAmount) >= numAmount) {
-      budget.approvedAmount = parseFloat(budget.approvedAmount) - numAmount;
-      budget.usedAmount = parseFloat(budget.usedAmount) + numAmount;
+    if (isOverBudget) {
+      if (parseFloat(budget.overBudgetApprovedAmount) >= numAmount) {
+        budget.overBudgetApprovedAmount = parseFloat(budget.overBudgetApprovedAmount) - numAmount;
+      }
+      budget.overBudgetUsedAmount = parseFloat(budget.overBudgetUsedAmount) + numAmount;
     } else {
+      if (parseFloat(budget.approvedAmount) >= numAmount) {
+        budget.approvedAmount = parseFloat(budget.approvedAmount) - numAmount;
+      }
       budget.usedAmount = parseFloat(budget.usedAmount) + numAmount;
     }
 
@@ -146,7 +165,7 @@ class BudgetService {
     return this._formatBudget(budget);
   }
 
-  async unfreezeBudget(deptId, year, half, amount, transaction) {
+  async unfreezeBudget(deptId, year, half, amount, transaction, isOverBudget = false) {
     const budget = await Budget.findOne({
       where: { deptId, year, half },
       lock: true,
@@ -158,9 +177,16 @@ class BudgetService {
     }
 
     const numAmount = parseFloat(amount);
-    if (parseFloat(budget.approvedAmount) >= numAmount) {
-      budget.approvedAmount = parseFloat(budget.approvedAmount) - numAmount;
-      await budget.save({ transaction });
+    if (isOverBudget) {
+      if (parseFloat(budget.overBudgetApprovedAmount) >= numAmount) {
+        budget.overBudgetApprovedAmount = parseFloat(budget.overBudgetApprovedAmount) - numAmount;
+        await budget.save({ transaction });
+      }
+    } else {
+      if (parseFloat(budget.approvedAmount) >= numAmount) {
+        budget.approvedAmount = parseFloat(budget.approvedAmount) - numAmount;
+        await budget.save({ transaction });
+      }
     }
 
     return this._formatBudget(budget);
@@ -210,6 +236,12 @@ class BudgetService {
     const total = parseFloat(budget.totalAmount) || 0;
     const used = parseFloat(budget.usedAmount) || 0;
     const approved = parseFloat(budget.approvedAmount) || 0;
+    const overBudgetUsed = parseFloat(budget.overBudgetUsedAmount) || 0;
+    const overBudgetApproved = parseFloat(budget.overBudgetApprovedAmount) || 0;
+    const normalAvailable = total - used - approved;
+    const totalAllUsed = used + overBudgetUsed;
+    const totalAllApproved = approved + overBudgetApproved;
+
     return {
       id: budget.id,
       deptId: budget.deptId,
@@ -218,11 +250,18 @@ class BudgetService {
       totalAmount: total,
       usedAmount: used,
       approvedAmount: approved,
-      availableAmount: total - used - approved,
+      overBudgetUsedAmount: overBudgetUsed,
+      overBudgetApprovedAmount: overBudgetApproved,
+      availableAmount: normalAvailable,
+      normalAvailable,
+      totalUsedAmount: totalAllUsed,
+      totalApprovedAmount: totalAllApproved,
       perPersonLimit: budget.perPersonLimit ? parseFloat(budget.perPersonLimit) : null,
-      usedPercent: total > 0 ? ((used + approved) / total) * 100 : 0,
+      usedPercent: total > 0 ? (totalAllUsed / total) * 100 : 0,
+      normalUsedPercent: total > 0 ? ((used + approved) / total) * 100 : 0,
       approverIds: budget.approverIds,
       remark: budget.remark,
+      hasOverBudget: overBudgetUsed > 0 || overBudgetApproved > 0,
     };
   }
 

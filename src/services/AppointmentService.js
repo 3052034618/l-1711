@@ -111,7 +111,35 @@ class AppointmentService {
     });
 
     logger.info(`创建预约成功: ${result.appointment.orderNo}`);
-    return result;
+
+    const response = {
+      appointment: {
+        id: result.appointment.id,
+        orderNo: result.appointment.orderNo,
+        employeeId: result.appointment.employeeId,
+        deptId: result.appointment.deptId,
+        packageId: result.appointment.packageId,
+        packageName: result.appointment.packageName,
+        totalAmount: result.appointment.totalAmount,
+        status: result.appointment.status,
+        approvalStatus: result.appointment.approvalStatus,
+        approvalLevel: result.approvalResult.approvalLevel,
+        totalLevels: result.approvalResult.totalLevels,
+        currentLevel: result.approvalResult.currentLevel,
+        currentApprover: result.approvalResult.currentApprover,
+        isOverBudget: result.approvalResult.isOverBudget,
+        budgetShortage: result.approvalResult.budgetShortage,
+        isNeedApproval: result.budgetCheck.needApproval,
+        approvalSuggestion: result.budgetCheck.suggestion,
+      },
+      budgetCheck: result.budgetCheck,
+    };
+
+    if (result.approvalResult.approvers) {
+      response.appointment.approvers = result.approvalResult.approvers;
+    }
+
+    return response;
   }
 
   async getRecommendationsAndCreatePreview(employeeId, packageId, extraItems = []) {
@@ -215,7 +243,8 @@ class AppointmentService {
           appointment.year,
           appointment.half,
           appointment.totalAmount,
-          t
+          t,
+          !!appointment.isOverBudget
         );
       }
 

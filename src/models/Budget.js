@@ -49,6 +49,20 @@ Budget.init(
       comment: '审批中金额',
       field: 'approved_amount',
     },
+    overBudgetApprovedAmount: {
+      type: DataTypes.DECIMAL(12, 2),
+      allowNull: false,
+      defaultValue: 0,
+      comment: '超预算审批中金额',
+      field: 'over_budget_approved_amount',
+    },
+    overBudgetUsedAmount: {
+      type: DataTypes.DECIMAL(12, 2),
+      allowNull: false,
+      defaultValue: 0,
+      comment: '超预算已使用金额（审批通过的超预算占用）',
+      field: 'over_budget_used_amount',
+    },
     perPersonLimit: {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: true,
@@ -81,6 +95,20 @@ Budget.init(
 );
 
 Budget.prototype.availableAmount = function () {
+  const total = parseFloat(this.totalAmount) || 0;
+  const used = parseFloat(this.usedAmount) || 0;
+  const approved = parseFloat(this.approvedAmount) || 0;
+  const overBudgetApproved = parseFloat(this.overBudgetApprovedAmount) || 0;
+  const overBudgetUsed = parseFloat(this.overBudgetUsedAmount) || 0;
+  return {
+    normalAvailable: total - used - approved,
+    overBudgetPending: overBudgetApproved + overBudgetUsed,
+    totalUsed: used + overBudgetUsed,
+    totalApproved: approved + overBudgetApproved,
+  };
+};
+
+Budget.prototype.getNormalAvailable = function () {
   const total = parseFloat(this.totalAmount) || 0;
   const used = parseFloat(this.usedAmount) || 0;
   const approved = parseFloat(this.approvedAmount) || 0;

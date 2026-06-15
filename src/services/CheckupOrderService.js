@@ -94,7 +94,8 @@ class CheckupOrderService {
         appointment.year,
         appointment.half,
         appointment.totalAmount,
-        t
+        t,
+        !!appointment.isOverBudget
       );
 
       return {
