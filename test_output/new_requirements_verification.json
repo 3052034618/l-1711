@@ -1,0 +1,115 @@
+{
+  "total": 27,
+  "passed": 27,
+  "failed": 0,
+  "details": [
+    {
+      "name": "语法检查: src/services/ApprovalService.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/services/ExternalReportService.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "语法检查: src/services/StatisticsReportService.js",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "所有通知调用都使用 setImmediate + catch",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "通知发送不中断预约和审批记录创建",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "驳回通知也使用异步非阻断模式",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "转审通知也使用异步非阻断模式",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "添加了 xlsx 库依赖",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "导入了 xlsx 库",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "_parseExcelFile 支持 .xls 格式判断",
+      "status": "✅ 通过"
+    },
+    {
+      "name": ".xls 格式解析逻辑完整",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "新增 .xls 辅助方法",
+      "status": "✅ 通过"
+    },
+    {
+      "name": ".xls 解析失败时不会生成空报告",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "返回结果包含文件格式信息",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "移除了 addChart 原生图表",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "新增 _generateChartImage 方法",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "chartjs-node-canvas 正确初始化",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "使用 addImage 嵌入图片",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "5个图表全部改为图片嵌入",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "图表生成失败时不会中断报表生成",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "_buildTrendSheet 改为 async 并正确调用",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "下一级审批记录创建时传递 isOverBudget",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "转审时创建审批记录传递 isOverBudget",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "\"已无更多审批人\"分支调用 freezeBudget 传递 isOverBudget",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "最后一级审批通过后通知包含 isOverBudget",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "超预算标记一路保留到体检单生成",
+      "status": "✅ 通过"
+    },
+    {
+      "name": "预算页面能区分正常/超预算占用",
+      "status": "✅ 通过"
+    }
+  ]
+}

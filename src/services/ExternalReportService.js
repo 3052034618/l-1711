@@ -15,6 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 const ExcelJS = require('exceljs');
+const XLSX = require('xlsx');
 
 const ALLOWED_TYPES = [
   'application/pdf',
@@ -213,8 +214,36 @@ class ExternalReportService {
   }
 
   async _parseExcelFile(filePath) {
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.readFile(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const isXls = ext === '.xls';
+
+    let worksheets;
+    let sheetCount;
+
+    if (isXls) {
+      logger.info(`检测到 .xls 格式，使用 xlsx 库解析: ${filePath}`);
+      const wb = XLSX.readFile(filePath, { type: 'file', cellDates: true });
+      sheetCount = wb.SheetNames.length;
+      worksheets = wb.SheetNames.map((name) => {
+        const ws = wb.Sheets[name];
+        const jsonData = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
+        return {
+          name,
+          rowCount: jsonData.length,
+          rows: jsonData,
+        };
+      });
+    } else {
+      logger.info(`检测到 .xlsx 格式，使用 ExcelJS 解析: ${filePath}`);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(filePath);
+      sheetCount = workbook.worksheets.length;
+      worksheets = workbook.worksheets.map((ws) => ({
+        name: ws.name,
+        rowCount: ws.rowCount,
+        worksheet: ws,
+      }));
+    }
 
     const allItems = [];
     let summary = null;
@@ -228,36 +257,57 @@ class ExternalReportService {
       category: ['分类', '类别', '分组', 'category', '组名'],
     };
 
-    for (const worksheet of workbook.worksheets) {
+    for (const worksheet of worksheets) {
       if (!worksheet || worksheet.rowCount < 2) continue;
 
-      const headerRow = this._findHeaderRow(worksheet, knownColumns);
+      const headerRow = isXls
+        ? this._findHeaderRowXls(worksheet, knownColumns)
+        : this._findHeaderRow(worksheet.worksheet, knownColumns);
+
       if (!headerRow || headerRow.index >= worksheet.rowCount) continue;
 
-      const columnMap = this._mapColumns(headerRow, knownColumns);
+      const columnMap = isXls
+        ? this._mapColumnsXls(headerRow, knownColumns)
+        : this._mapColumns(headerRow, knownColumns);
+
       if (!columnMap.name || !columnMap.result) continue;
 
       let currentCategory = worksheet.name && worksheet.name !== 'Sheet1' ? worksheet.name : null;
 
       for (let i = headerRow.index + 1; i <= worksheet.rowCount; i++) {
-        const row = worksheet.getRow(i);
-        if (!row || row.cellCount === 0) continue;
+        let name, result, unit, refRange, abnormal;
 
-        const name = this._getCellValue(row, columnMap.name);
-        const result = this._getCellValue(row, columnMap.result);
-
-        if (!name || String(name).trim() === '') continue;
-
-        if (columnMap.category) {
-          const cat = this._getCellValue(row, columnMap.category);
-          if (cat && String(cat).trim() !== '') {
-            currentCategory = String(cat).trim();
+        if (isXls) {
+          const rowData = worksheet.rows[i - 1];
+          if (!rowData || rowData.length === 0) continue;
+          name = this._getCellValueXls(rowData, columnMap.name);
+          result = this._getCellValueXls(rowData, columnMap.result);
+          if (columnMap.category) {
+            const cat = this._getCellValueXls(rowData, columnMap.category);
+            if (cat && String(cat).trim() !== '') {
+              currentCategory = String(cat).trim();
+            }
           }
+          unit = columnMap.unit ? this._getCellValueXls(rowData, columnMap.unit) : '';
+          refRange = columnMap.refRange ? this._getCellValueXls(rowData, columnMap.refRange) : '';
+          abnormal = columnMap.abnormal ? this._getCellValueXls(rowData, columnMap.abnormal) : '';
+        } else {
+          const row = worksheet.worksheet.getRow(i);
+          if (!row || row.cellCount === 0) continue;
+          name = this._getCellValue(row, columnMap.name);
+          result = this._getCellValue(row, columnMap.result);
+          if (columnMap.category) {
+            const cat = this._getCellValue(row, columnMap.category);
+            if (cat && String(cat).trim() !== '') {
+              currentCategory = String(cat).trim();
+            }
+          }
+          unit = columnMap.unit ? this._getCellValue(row, columnMap.unit) : '';
+          refRange = columnMap.refRange ? this._getCellValue(row, columnMap.refRange) : '';
+          abnormal = columnMap.abnormal ? this._getCellValue(row, columnMap.abnormal) : '';
         }
 
-        const unit = columnMap.unit ? this._getCellValue(row, columnMap.unit) : '';
-        const refRange = columnMap.refRange ? this._getCellValue(row, columnMap.refRange) : '';
-        let abnormal = columnMap.abnormal ? this._getCellValue(row, columnMap.abnormal) : '';
+        if (!name || String(name).trim() === '') continue;
 
         const nameStr = String(name).trim();
         const resultStr = result !== null && result !== undefined ? String(result).trim() : '';
@@ -349,10 +399,15 @@ class ExternalReportService {
       }
     }
 
+    if (allItems.length === 0) {
+      logger.warn(`Excel解析未能提取到任何指标，请检查文件格式: ${filePath}`);
+    }
+
     return {
       items: allItems,
       summary,
-      sheetCount: workbook.worksheets.length,
+      sheetCount,
+      fileFormat: isXls ? 'xls' : 'xlsx',
     };
   }
 
@@ -403,6 +458,58 @@ class ExternalReportService {
     const val = cell.value;
     if (val === null || val === undefined) return null;
     if (typeof val === 'object' && val.result !== undefined) return val.result;
+    return val;
+  }
+
+  _findHeaderRowXls(worksheet, knownColumns) {
+    const maxScanRows = Math.min(10, worksheet.rowCount);
+    for (let i = 0; i < maxScanRows; i++) {
+      const rowData = worksheet.rows[i];
+      if (!rowData || rowData.length === 0) continue;
+
+      let hitCount = 0;
+      for (const cellVal of rowData) {
+        if (cellVal === null || cellVal === undefined) continue;
+        const val = String(cellVal).trim().toLowerCase();
+        for (const colDef of Object.values(knownColumns)) {
+          if (colDef.some((keyword) => val.includes(keyword.toLowerCase()))) {
+            hitCount++;
+            break;
+          }
+        }
+      }
+
+      if (hitCount >= 2) {
+        return { row: rowData, index: i + 1 };
+      }
+    }
+    return null;
+  }
+
+  _mapColumnsXls(headerRow, knownColumns) {
+    const map = {};
+    headerRow.row.forEach((cell, colIndex) => {
+      if (cell === null || cell === undefined) return;
+      const val = String(cell).trim().toLowerCase();
+      for (const [colName, keywords] of Object.entries(knownColumns)) {
+        if (keywords.some((keyword) => val === keyword.toLowerCase() || val.includes(keyword.toLowerCase()))) {
+          if (!map[colName]) {
+            map[colName] = colIndex + 1;
+          }
+          break;
+        }
+      }
+    });
+    return map;
+  }
+
+  _getCellValueXls(rowData, colIndex) {
+    if (!colIndex || !rowData || colIndex - 1 >= rowData.length) return null;
+    const val = rowData[colIndex - 1];
+    if (val === null || val === undefined) return null;
+    if (val instanceof Date) {
+      return val.toISOString().split('T')[0];
+    }
     return val;
   }
 

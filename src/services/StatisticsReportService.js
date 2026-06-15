@@ -11,12 +11,19 @@ const {
   sequelize,
 } = require('../models');
 const { logger } = require('../utils/logger');
-const { getYearRange } = require('../utils/helpers');
+const { getYearRange, roundTo } = require('../utils/helpers');
 const PDFDocument = require('pdfkit');
 const ExcelJS = require('exceljs');
+const { ChartJSNodeCanvas } = require('chartjs-node-canvas');
 const path = require('path');
 const fs = require('fs');
 const config = require('../config');
+
+const chartCanvas = new ChartJSNodeCanvas({
+  width: 800,
+  height: 400,
+  backgroundColour: 'white',
+});
 
 class StatisticsReportService {
   async getDeptDailyStats(deptId, year, half) {
@@ -679,7 +686,7 @@ class StatisticsReportService {
     this._buildSummarySheet(workbook, stats, year, half);
     this._buildDeptSheet(workbook, stats);
     this._buildAbnormalRankingSheet(workbook, itemRankings);
-    this._buildTrendSheet(workbook, trend);
+    await this._buildTrendSheet(workbook, trend);
 
     await workbook.xlsx.writeFile(filePath);
     logger.info(`Excel报表生成: ${fileName}`);
@@ -775,7 +782,48 @@ class StatisticsReportService {
     });
   }
 
-  _buildTrendSheet(workbook, trend) {
+  async _generateChartImage(config) {
+    try {
+      const configuration = {
+        type: config.type || 'line',
+        data: config.data,
+        options: {
+          responsive: true,
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: {
+                font: { size: 12 },
+              },
+            },
+            title: {
+              display: true,
+              text: config.title,
+              font: { size: 16, weight: 'bold' },
+            },
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              max: config.yMax || 100,
+              title: {
+                display: true,
+                text: config.yLabel || '数值',
+              },
+            },
+          },
+        },
+      };
+
+      const buffer = await chartCanvas.renderToBuffer(configuration);
+      return buffer;
+    } catch (e) {
+      logger.error('生成图表图片失败', e);
+      return null;
+    }
+  }
+
+  async _buildTrendSheet(workbook, trend) {
     const ws = workbook.addWorksheet('历年趋势', { views: [{ state: 'frozen', ySplit: 1 }] });
     ws.columns = [
       { header: '年份', key: 'year', width: 10 },
@@ -794,8 +842,9 @@ class StatisticsReportService {
     ws.getRow(1).font = { bold: true };
     ws.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' };
 
+    const trendData = [];
     trend.trends.forEach((t) => {
-      ws.addRow({
+      const rowData = {
         year: t.year,
         empCount: t.employeeCount,
         completed: t.completedCount,
@@ -807,93 +856,173 @@ class StatisticsReportService {
         warning: t.warningCount,
         totalBudget: roundTo((t.totalBudget || 0) / 10000, 2),
         usedBudget: roundTo((t.usedBudget || 0) / 10000, 2),
-      });
+      };
+      ws.addRow(rowData);
+      trendData.push(rowData);
     });
 
     const dataStartRow = 2;
     const dataEndRow = dataStartRow + trend.trends.length - 1;
 
-    const chart1 = ws.addChart({
-      type: 'line',
-      title: { text: '体检完成率趋势(%)', fontSize: 14, bold: true },
-      legend: { position: 'bottom' },
-      dimensions: { col: 12, row: 1, width: 30, height: 15 },
-    });
-    chart1.addSeries({
-      name: '体检完成率(%)',
-      categories: `'历年趋势'!$A$${dataStartRow}:$A$${dataEndRow}`,
-      values: `'历年趋势'!$D$${dataStartRow}:$D$${dataEndRow}`,
-      style: { color: '#4CAF50', width: 2 },
-      markers: { type: 'circle', size: 6 },
-    });
+    const labels = trendData.map((t) => String(t.year));
+    const completionRates = trendData.map((t) => t.completionRate);
+    const abnormalRates = trendData.map((t) => t.abnormalRate);
+    const budgetRates = trendData.map((t) => t.budgetRate);
+    const warningCounts = trendData.map((t) => t.warning);
 
-    const chart2 = ws.addChart({
-      type: 'line',
-      title: { text: '异常报告率趋势(%)', fontSize: 14, bold: true },
-      legend: { position: 'bottom' },
-      dimensions: { col: 12, row: 17, width: 30, height: 15 },
-    });
-    chart2.addSeries({
-      name: '异常报告率(%)',
-      categories: `'历年趋势'!$A$${dataStartRow}:$A$${dataEndRow}`,
-      values: `'历年趋势'!$G$${dataStartRow}:$G$${dataEndRow}`,
-      style: { color: '#FF9800', width: 2 },
-      markers: { type: 'circle', size: 6 },
-    });
+    const chartConfigs = [
+      {
+        title: '体检完成率趋势(%)',
+        type: 'line',
+        yMax: 100,
+        yLabel: '完成率(%)',
+        data: {
+          labels,
+          datasets: [{
+            label: '体检完成率(%)',
+            data: completionRates,
+            borderColor: '#4CAF50',
+            backgroundColor: 'rgba(76, 175, 80, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.3,
+            pointRadius: 6,
+            pointBackgroundColor: '#4CAF50',
+          }],
+        },
+        position: { col: 12, row: 1 },
+      },
+      {
+        title: '异常报告率趋势(%)',
+        type: 'line',
+        yMax: 100,
+        yLabel: '异常率(%)',
+        data: {
+          labels,
+          datasets: [{
+            label: '异常报告率(%)',
+            data: abnormalRates,
+            borderColor: '#FF9800',
+            backgroundColor: 'rgba(255, 152, 0, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.3,
+            pointRadius: 6,
+            pointBackgroundColor: '#FF9800',
+          }],
+        },
+        position: { col: 12, row: 22 },
+      },
+      {
+        title: '预算使用率趋势(%)',
+        type: 'bar',
+        yMax: 100,
+        yLabel: '预算使用率(%)',
+        data: {
+          labels,
+          datasets: [{
+            label: '预算使用率(%)',
+            data: budgetRates,
+            backgroundColor: 'rgba(33, 150, 243, 0.7)',
+            borderColor: '#2196F3',
+            borderWidth: 1,
+          }],
+        },
+        position: { col: 12, row: 43 },
+      },
+      {
+        title: '三大指标综合趋势对比(%)',
+        type: 'line',
+        yMax: 100,
+        yLabel: '比率(%)',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: '体检完成率(%)',
+              data: completionRates,
+              borderColor: '#4CAF50',
+              backgroundColor: 'rgba(76, 175, 80, 0.1)',
+              borderWidth: 2,
+              tension: 0.3,
+              pointRadius: 4,
+              pointBackgroundColor: '#4CAF50',
+            },
+            {
+              label: '异常报告率(%)',
+              data: abnormalRates,
+              borderColor: '#FF9800',
+              backgroundColor: 'rgba(255, 152, 0, 0.1)',
+              borderWidth: 2,
+              tension: 0.3,
+              pointRadius: 4,
+              pointBackgroundColor: '#FF9800',
+            },
+            {
+              label: '预算使用率(%)',
+              data: budgetRates,
+              borderColor: '#2196F3',
+              backgroundColor: 'rgba(33, 150, 243, 0.1)',
+              borderWidth: 2,
+              tension: 0.3,
+              pointRadius: 4,
+              pointBackgroundColor: '#2196F3',
+            },
+          ],
+        },
+        position: { col: 1, row: dataEndRow + 3 },
+        wide: true,
+      },
+      {
+        title: '预警工单数趋势',
+        type: 'bar',
+        yMax: Math.max(10, ...warningCounts) + 5,
+        yLabel: '工单数',
+        data: {
+          labels,
+          datasets: [{
+            label: '预警工单数',
+            data: warningCounts,
+            backgroundColor: 'rgba(233, 30, 99, 0.7)',
+            borderColor: '#E91E63',
+            borderWidth: 1,
+          }],
+        },
+        position: { col: 1, row: dataEndRow + 28 },
+        wide: true,
+      },
+    ];
 
-    const chart3 = ws.addChart({
-      type: 'column',
-      title: { text: '预算使用率趋势(%)', fontSize: 14, bold: true },
-      legend: { position: 'bottom' },
-      dimensions: { col: 12, row: 33, width: 30, height: 15 },
-    });
-    chart3.addSeries({
-      name: '预算使用率(%)',
-      categories: `'历年趋势'!$A$${dataStartRow}:$A$${dataEndRow}`,
-      values: `'历年趋势'!$H$${dataStartRow}:$H$${dataEndRow}`,
-      style: { color: '#2196F3' },
-    });
+    logger.info(`开始生成 ${chartConfigs.length} 个Excel图表...`);
 
-    const chart4 = ws.addChart({
-      type: 'line',
-      title: { text: '三大指标综合趋势对比(%)', fontSize: 14, bold: true },
-      legend: { position: 'bottom' },
-      dimensions: { col: 1, row: dataEndRow + 3, width: 55, height: 20 },
-    });
-    chart4.addSeries({
-      name: '体检完成率(%)',
-      categories: `'历年趋势'!$A$${dataStartRow}:$A$${dataEndRow}`,
-      values: `'历年趋势'!$D$${dataStartRow}:$D$${dataEndRow}`,
-      style: { color: '#4CAF50', width: 2 },
-      markers: { type: 'circle', size: 6 },
-    });
-    chart4.addSeries({
-      name: '异常报告率(%)',
-      categories: `'历年趋势'!$A$${dataStartRow}:$A$${dataEndRow}`,
-      values: `'历年趋势'!$G$${dataStartRow}:$G$${dataEndRow}`,
-      style: { color: '#FF9800', width: 2 },
-      markers: { type: 'circle', size: 6 },
-    });
-    chart4.addSeries({
-      name: '预算使用率(%)',
-      categories: `'历年趋势'!$A$${dataStartRow}:$A$${dataEndRow}`,
-      values: `'历年趋势'!$H$${dataStartRow}:$H$${dataEndRow}`,
-      style: { color: '#2196F3', width: 2 },
-      markers: { type: 'circle', size: 6 },
-    });
+    for (let i = 0; i < chartConfigs.length; i++) {
+      const cfg = chartConfigs[i];
+      try {
+        const imgBuffer = await this._generateChartImage(cfg);
+        if (imgBuffer) {
+          const imgId = workbook.addImage({
+            buffer: imgBuffer,
+            extension: 'png',
+          });
 
-    const chart5 = ws.addChart({
-      type: 'column',
-      title: { text: '预警工单数趋势', fontSize: 14, bold: true },
-      legend: { position: 'bottom' },
-      dimensions: { col: 1, row: dataEndRow + 24, width: 55, height: 15 },
-    });
-    chart5.addSeries({
-      name: '预警工单数',
-      categories: `'历年趋势'!$A$${dataStartRow}:$A$${dataEndRow}`,
-      values: `'历年趋势'!$I$${dataStartRow}:$I$${dataEndRow}`,
-      style: { color: '#E91E63' },
-    });
+          const width = cfg.wide ? 780 : 380;
+          const height = cfg.wide ? 320 : 260;
+
+          ws.addImage(imgId, {
+            tl: { col: cfg.position.col - 1, row: cfg.position.row - 1 },
+            ext: { width, height },
+          });
+
+          logger.info(`✓ 图表 ${i + 1} "${cfg.title}" 已生成并嵌入`);
+        } else {
+          logger.warn(`⚠️  图表 ${i + 1} "${cfg.title}" 生成失败，跳过`);
+        }
+      } catch (e) {
+        logger.error(`生成图表 ${i + 1} 出错:`, e.message);
+      }
+    }
+
+    logger.info('Excel趋势图生成完成');
   }
 
   async getReportHistory() {
@@ -920,11 +1049,6 @@ class StatisticsReportService {
       })
       .sort((a, b) => b.createdAt - a.createdAt);
   }
-}
-
-function roundTo(num, precision = 2) {
-  const factor = Math.pow(10, precision);
-  return Math.round((num + Number.EPSILON) * factor) / factor;
 }
 
 module.exports = new StatisticsReportService();

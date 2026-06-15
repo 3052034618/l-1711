@@ -232,14 +232,22 @@ class ApprovalService {
           appointment.year,
           appointment.half,
           appointment.totalAmount,
-          t
+          t,
+          !!appointment.isOverBudget
         );
+
+        setImmediate(() => {
+          this._notifyApplicant(appointment, 'approved', remark).catch((e) => {
+            logger.error('[非阻断] 发送审批通过通知失败', e.message);
+          });
+        });
 
         return {
           success: true,
           message: '审批通过（已无更多审批人）',
           status: 'approved',
           isFinal: true,
+          isOverBudget: !!appointment.isOverBudget,
         };
       }
 
@@ -255,11 +263,16 @@ class ApprovalService {
           approverName: '待确认',
           approvalLevel: nextLevel,
           status: 'pending',
+          isOverBudget: !!appointment.isOverBudget,
         },
         { transaction: t }
       );
 
-      this._notifyApprover(nextApprover.userId, appointment);
+      setImmediate(() => {
+        this._notifyApprover(nextApprover.userId, appointment).catch((e) => {
+          logger.error(`[非阻断] 发送下一级审批通知失败，预约已创建: ${appointment.orderNo}`, e.message);
+        });
+      });
 
       return {
         success: true,
@@ -317,7 +330,11 @@ class ApprovalService {
       appointment.rejectReason = reason;
       await appointment.save({ transaction: t });
 
-      await this._notifyApplicant(appointment, 'rejected', reason);
+      setImmediate(() => {
+        this._notifyApplicant(appointment, 'rejected', reason).catch((e) => {
+          logger.error('[非阻断] 发送审批驳回通知失败', e.message);
+        });
+      });
 
       return {
         success: true,
@@ -367,9 +384,14 @@ class ApprovalService {
       approverName: '待确认',
       approvalLevel: appointment.approvalLevel,
       status: 'pending',
+      isOverBudget: !!appointment.isOverBudget,
     });
 
-    this._notifyApprover(toApproverId, appointment);
+    setImmediate(() => {
+      this._notifyApprover(toApproverId, appointment).catch((e) => {
+        logger.error(`[非阻断] 发送转审通知失败，预约已创建: ${appointment.orderNo}`, e.message);
+      });
+    });
 
     return { success: true, message: '已转审' };
   }
