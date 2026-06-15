@@ -281,34 +281,6 @@ router.post(
 );
 
 router.get(
-  '/budget/:deptId/:year/:half?',
-  authRequired,
-  asyncHandler(async (req, res) => {
-    const { deptId, year, half = 'all' } = req.params;
-    const result = await BudgetService.getDeptBudget(parseInt(deptId), parseInt(year), half);
-    success(res, result);
-  })
-);
-
-router.post(
-  '/budget',
-  authRequired,
-  roleRequired('admin', 'hr', 'manager'),
-  asyncHandler(async (req, res) => {
-    const { deptId, year, half = 'all', totalAmount, perPersonLimit, approverIds, remark } =
-      req.body;
-    const result = await BudgetService.updateBudget(
-      parseInt(deptId),
-      parseInt(year),
-      half,
-      { totalAmount, perPersonLimit, approverIds, remark },
-      req.user.id
-    );
-    success(res, result);
-  })
-);
-
-router.get(
   '/budget/overbudget-dashboard',
   authRequired,
   roleRequired('admin', 'hr', 'manager', 'finance'),
@@ -338,6 +310,34 @@ router.get(
     };
     const result = await BudgetService.getBudgetDetailRecords(filters);
     pagedSuccess(res, result);
+  })
+);
+
+router.get(
+  '/budget/:deptId/:year/:half?',
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const { deptId, year, half = 'all' } = req.params;
+    const result = await BudgetService.getDeptBudget(parseInt(deptId), parseInt(year), half);
+    success(res, result);
+  })
+);
+
+router.post(
+  '/budget',
+  authRequired,
+  roleRequired('admin', 'hr', 'manager'),
+  asyncHandler(async (req, res) => {
+    const { deptId, year, half = 'all', totalAmount, perPersonLimit, approverIds, remark } =
+      req.body;
+    const result = await BudgetService.updateBudget(
+      parseInt(deptId),
+      parseInt(year),
+      half,
+      { totalAmount, perPersonLimit, approverIds, remark },
+      req.user.id
+    );
+    success(res, result);
   })
 );
 

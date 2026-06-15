@@ -1,0 +1,75 @@
+{
+  "passed": 17,
+  "failed": 0,
+  "total": 17,
+  "results": [
+    {
+      "name": "语法检查: src/services/ApprovalService.js",
+      "status": "passed"
+    },
+    {
+      "name": "语法检查: src/services/StatisticsReportService.js",
+      "status": "passed"
+    },
+    {
+      "name": "语法检查: src/routes/appointment.js",
+      "status": "passed"
+    },
+    {
+      "name": "静态路由在动态路由之前",
+      "status": "passed"
+    },
+    {
+      "name": "金额反查接口四种类型筛选完整",
+      "status": "passed"
+    },
+    {
+      "name": "金额反查返回预约和审批记录",
+      "status": "passed"
+    },
+    {
+      "name": "报表历史列表摘要包含TOP异常指标",
+      "status": "passed"
+    },
+    {
+      "name": "报表历史列表摘要包含趋势数据",
+      "status": "passed"
+    },
+    {
+      "name": "报表历史列表摘要包含完整关键指标",
+      "status": "passed"
+    },
+    {
+      "name": "getReportPreview 返回完整摘要",
+      "status": "passed"
+    },
+    {
+      "name": "报表历史支持deptId筛选参数",
+      "status": "passed"
+    },
+    {
+      "name": "部门筛选结合摘要deptId判断",
+      "status": "passed"
+    },
+    {
+      "name": "部门筛选与年份类型筛选组合使用",
+      "status": "passed"
+    },
+    {
+      "name": "审批工作台支持handled已处理状态",
+      "status": "passed"
+    },
+    {
+      "name": "pending待办状态只显示待处理",
+      "status": "passed"
+    },
+    {
+      "name": "审批统计返回handled已处理数量",
+      "status": "passed"
+    },
+    {
+      "name": "工作台返回当前筛选状态",
+      "status": "passed"
+    }
+  ]
+}

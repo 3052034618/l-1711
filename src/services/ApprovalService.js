@@ -438,6 +438,9 @@ class ApprovalService {
       case 'pending':
         recordWhere.status = 'pending';
         break;
+      case 'handled':
+        recordWhere.status = { [Op.in]: ['approved', 'rejected', 'transferred'] };
+        break;
       case 'approved':
       case 'rejected':
         recordWhere.status = status;
@@ -638,6 +641,7 @@ class ApprovalService {
       approved,
       rejected,
       transferred,
+      handled: approved + rejected + transferred,
       overBudget,
       total: pending + approved + rejected + transferred,
     };

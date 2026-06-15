@@ -1133,28 +1133,39 @@ class StatisticsReportService {
       f.endsWith('.pdf') || f.endsWith('.xlsx')
     );
 
-    files = files.filter((f) => {
-      const info = this._parseReportFileName(f);
-      if (!info) return false;
+    files = await Promise.all(
+      files.map(async (f) => {
+        const info = this._parseReportFileName(f);
+        if (!info) return null;
 
-      if (year && info.year !== parseInt(year)) return false;
-      if (type && info.type !== type) return false;
+        if (year && info.year !== parseInt(year)) return null;
+        if (type && info.type !== type) return null;
 
-      return true;
-    });
+        if (deptId) {
+          const summary = await this._loadReportSummary(f);
+          const summaryDeptId = summary?.deptId;
+          if (summaryDeptId !== undefined && summaryDeptId !== null) {
+            if (String(summaryDeptId) !== String(deptId)) return null;
+          }
+        }
+
+        return { fileName: f, info };
+      })
+    );
+
+    files = files.filter((f) => f !== null);
 
     const filesWithInfo = files
-      .map((f) => {
-        const fullPath = path.join(reportDir, f);
+      .map(({ fileName, info }) => {
+        const fullPath = path.join(reportDir, fileName);
         const stat = fs.statSync(fullPath);
-        const info = this._parseReportFileName(f);
 
         return {
-          fileName: f,
-          url: `/reports/${f}`,
+          fileName,
+          url: `/reports/${fileName}`,
           size: stat.size,
           createdAt: stat.birthtime,
-          type: info?.type || (f.endsWith('.pdf') ? 'pdf' : 'excel'),
+          type: info?.type || (fileName.endsWith('.pdf') ? 'pdf' : 'excel'),
           year: info?.year,
           half: info?.half,
           timestamp: info?.timestamp,
@@ -1171,12 +1182,17 @@ class StatisticsReportService {
         const summary = await this._loadReportSummary(f.fileName);
         return {
           ...f,
+          deptId: summary?.deptId,
           summary: summary ? {
             periodText: summary.periodText,
             employeeCount: summary.summary?.employeeCount,
             completionRate: summary.summary?.completionRate,
             abnormalRate: summary.summary?.abnormalRate,
             budgetUsageRate: summary.summary?.budgetUsageRate,
+            warningCount: summary.summary?.warningCount,
+            totalDepartments: summary.summary?.totalDepartments,
+            topAbnormal: summary.topAbnormal || [],
+            trendData: summary.trendData || {},
             generatedAt: summary.generatedAt,
           } : null,
         };
